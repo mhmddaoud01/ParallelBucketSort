@@ -1,0 +1,75 @@
+function parallel_bucket_sort(data, N, num_processes):
+
+    // Initialize MPI environment and retrieve process rank and number of processes
+    Initialize MPI
+    rank = get_process_rank()
+    size = get_number_of_processes()
+
+    // Step 1: Root process (rank 0) generates random data and performs serial sort for verification
+    if rank == 0:
+        data = generate_random_data(N)              // Generate random data array of size N
+        sorted_serial = copy(data)                  // Make a copy of the data for serial sorting
+        
+        serial_start_time = get_current_time()      // Start timing for serial sort
+        sorted_serial = serial_sort(sorted_serial)  // Perform serial sort on the data
+        serial_end_time = get_current_time()        // End timing for serial sort
+        serial_time = serial_end_time - serial_start_time  // Calculate serial sort time
+        print("Serial sort completed in", serial_time)
+
+    MPI_Barrier()  // Synchronize all processes before parallel sort starts
+
+    // Step 2: Start timing for parallel sort
+    parallel_start_time = get_current_time()
+
+    // Step 3: Broadcast the size N from the root process to all other processes
+    MPI_Bcast(N, root=0)
+
+    chunk_size = N / size                            // Calculate the chunk size each process will handle
+    local_data = allocate_memory(chunk_size)         // Allocate memory for local data
+
+    // Step 4: Distribute chunks of data to each process, each process sorts its own chunk
+    MPI_Scatter(data, chunk_size, local_data, root=0)
+    sort(local_data)
+
+    // Step 5: Prepare arrays for send/receive counts and displacements
+    sendcounts = allocate_array(size, initialized to 0)
+    sdispls = allocate_array(size, initialized to 0)
+    recvcounts = allocate_array(size, initialized to 0)
+    rdispls = allocate_array(size, initialized to 0)
+
+    // Step 6: Allocate buckets for sorting
+    buckets = allocate_array_of_arrays(size)
+
+    // Step 7: Place elements from local_data into appropriate buckets
+    for i = 0 to chunk_size - 1:
+        target_proc = (local_data[i] / max_value) * size  // Determine which bucket the element belongs to
+        if target_proc >= size:                           // Ensure index doesn't exceed size
+            target_proc = size - 1
+        buckets[target_proc][sendcounts[target_proc]++] = local_data[i]  // Add element to the correct bucket
+
+    // Step 8: Perform an all-to-all exchange between processes
+    MPI_Alltoall(sendbuf, sendcounts, sdispls, recvbuf, recvcounts, rdispls)
+    sort(recvbuf)  // Sort the received data locally in each process
+
+    total_recv = gather_counts(recvcounts)               // Gather total received data size
+    rdispls = compute_displacements(recvcounts)          // Compute displacements for gathering sorted data
+
+    // Step 9: Gather sorted data into the root process
+    if rank == 0:
+        final_sorted_data = allocate_memory(N)
+
+    MPI_Gatherv(recvbuf, total_recv, final_sorted_data, recvcounts, rdispls, root=0)
+
+    // Step 10: End timing for parallel sort
+    parallel_end_time = get_current_time()
+    parallel_time = parallel_end_time - parallel_start_time
+
+    // Step 11: Verify correctness and calculate speedup
+    if rank == 0:
+        verify_sorted_data(sorted_serial, final_sorted_data)   // Compare serial and parallel sorted data
+        print("Parallel sort completed in", parallel_time)
+        speedup = serial_time / parallel_time                  // Calculate speedup
+        print("Speedup:", speedup)
+    
+    Free allocated memory     // Free all dynamically allocated memory
+    Finalize MPI              // Finalize the MPI environment
